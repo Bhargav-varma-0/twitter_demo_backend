@@ -4,6 +4,7 @@ const { open } = require("sqlite");
 const sqlite3 = require("sqlite3");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
+const { format } = require("date-fns");
 
 const dbPath = path.join(__dirname, "twitterClone.db");
 let db;
@@ -153,14 +154,106 @@ app.get("/tweets/:tweetId/", authenticateUser, async (req, res) => {
     const { userId } = req.body;
     const { tweetId } = req.params;
     console.log(`tweetId : ${tweetId}`);
+    const tweetDetails = await db.get(
+      "SELECT tweet.tweet AS tweet ,COUNT(like.like_id) AS likes, COUNT(reply.reply) AS replies, tweet.date_time AS dateTime FROM tweet LEFT JOIN reply ON reply.tweet_id = tweet.tweet_id LEFT JOIN like ON like.tweet_id = tweet.tweet_id WHERE tweet.tweet_id = ?  AND tweet.user_id NOT IN (SELECT following_user_id FROM follower WHERE follower_user_id = ? ) GROUP BY tweet.tweet_id;",
+      [userId, tweetId]
+    );
+    tweetDetails === undefined
+      ? res.status(401).send("Invalid Request")
+      : res.send(tweetDetails);
   } catch (error) {
     console.error(error);
   }
 });
 
-app.get("", authenticateUser, async (req, res) => {});
-app.get("", authenticateUser, async (req, res) => {});
-app.get("", authenticateUser, async (req, res) => {});
-app.get("", authenticateUser, async (req, res) => {});
+app.get("/tweets/:tweetId/likes/", authenticateUser, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const { tweetId } = req.params;
+    const tweetLikeDetails = await db.all(
+      "SELECT user.username AS username FROM user INNER JOIN like ON user.user_id = like.user_id WHERE like.tweet_id = ? AND user.user_id IN ( SELECT following_user_id FROM follower WHERE follower_user_id = ? );",
+      [userId, tweetId]
+    );
+    if (tweetLikeDetails.length === 0 || tweetLikeDetails === undefined) {
+      res.status(401).send("Invalid Request");
+    } else {
+      res.send(tweetLikeDetails);
+    }
+  } catch (error) {
+    console.error(error);
+  }
+});
+app.get("/tweets/:tweetId/replies/", authenticateUser, async (req, res) => {
+  try {
+    const { tweetId } = req.params;
+    const { userId } = req.body;
+
+    const getRepliesQuery = `
+      SELECT reply.reply AS reply
+      FROM reply
+      WHERE reply.tweet_id = ? AND reply.user_id IN (
+        SELECT following_user_id FROM follower WHERE follower_user_id = ? );`;
+    const replies = await db.all(getRepliesQuery, [tweetId, userId]);
+    console.log(`!replies. : ${!replies}`);
+    if (!replies || replies.length === 0) {
+      res.status(401).send("Invalid Request");
+    } else {
+      res.send(replies);
+    }
+  } catch (error) {
+    console.error(error);
+  }
+});
+app.get("/user/tweets/", authenticateUser, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const allTweetsOfUser = await db.all(
+      "SELECT tweet.tweet AS tweet ,COUNT(like.like_id) AS likes, COUNT(reply.reply) AS replies, tweet.date_time AS dateTime FROM tweet LEFT JOIN reply ON reply.tweet_id = tweet.tweet_id LEFT JOIN like ON like.tweet_id = tweet.tweet_id WHERE tweet.user_id = ? GROUP BY tweet.tweet_id",
+      userId
+    );
+    res.send(allTweetsOfUser);
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+app.post("/user/tweets/", authenticateUser, async (req, res) => {
+  try {
+    const { userId, tweet } = req.body;
+    console.log(`userId : ${userId} tweet : ${tweet}`);
+    const currentDateTime = await format(new Date(), "yyyy-MM-dd HH:mm:ss");
+    console.log(currentDateTime);
+    const createNewPost = await db.run(
+      "INSERT INTO tweet (tweet,user_id,date_time) VALUES (?,?,?);",
+      [userId, tweet, currentDateTime]
+    );
+    res.send("Created a Tweet");
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+app.delete("/tweets/:tweetId/", authenticateUser, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const { tweetId } = req.params;
+    const tweetRequested = await db.get(
+      "SELECT user_id FROM tweet WHERE tweet_id = ?",
+      tweetId
+    );
+    if (tweetRequested.user_id !== userId) {
+      res.status(401).send("Invalid Request");
+      return;
+    }
+    const deleteTweet = await db.run(
+      "DELETE FROM tweet WHERE tweet_id = ?",
+      tweetId
+    );
+    res.send("Tweet Removed");
+  } catch (error) {
+    console.error(error);
+  }
+});
 
 module.exports = app;
+// module.exports = app;
